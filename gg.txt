@@ -1,4 +1,4 @@
-/* 專案結構
+/* 權限管理 Excel 處理專案
 excel-processor/
 ├── src/
 │   ├── main/
@@ -8,11 +8,14 @@ excel-processor/
 │   │   │           └── excelprocessor/
 │   │   │               ├── ExcelProcessorApplication.java
 │   │   │               ├── controller/
-│   │   │               │   └── FileUploadController.java
+│   │   │               │   └── PermissionExcelController.java
 │   │   │               ├── service/
-│   │   │               │   └── ExcelService.java
-│   │   │               └── model/
-│   │   │                   └── ExcelData.java
+│   │   │               │   └── PermissionExcelService.java
+│   │   │               ├── model/
+│   │   │               │   ├── PermissionData.java
+│   │   │               │   └── SqlGenerationResult.java
+│   │   │               └── util/
+│   │   │                   └── SqlGenerator.java
 │   │   └── resources/
 │   │       ├── templates/
 │   │       │   ├── upload.html
@@ -20,7 +23,7 @@ excel-processor/
 │   │       ├── static/
 │   │       │   └── css/
 │   │       │       └── main.css
-│   │       └── application.properties
+│   │       └── application.yml
 └── pom.xml
 */
 
@@ -33,13 +36,13 @@ excel-processor/
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
         <version>3.2.0</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <relativePath/>
     </parent>
     <groupId>com.example</groupId>
-    <artifactId>excel-processor</artifactId>
+    <artifactId>permission-excel-processor</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>excel-processor</name>
-    <description>Spring Boot application for processing Excel files</description>
+    <name>permission-excel-processor</name>
+    <description>權限管理 Excel 處理系統</description>
     
     <properties>
         <java.version>17</java.version>
@@ -59,12 +62,12 @@ excel-processor/
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi</artifactId>
-            <version>5.2.3</version>
+            <version>5.2.4</version>
         </dependency>
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
-            <version>5.2.3</version>
+            <version>5.2.4</version>
         </dependency>
         
         <dependency>
@@ -75,8 +78,7 @@ excel-processor/
         
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
+            <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
         
         <dependency>
@@ -84,6 +86,12 @@ excel-processor/
             <artifactId>spring-boot-devtools</artifactId>
             <scope>runtime</scope>
             <optional>true</optional>
+        </dependency>
+        
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
     
@@ -113,13 +121,12 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
 public class ExcelProcessorApplication {
-
     public static void main(String[] args) {
         SpringApplication.run(ExcelProcessorApplication.class, args);
     }
 }
 
-// src/main/java/com/example/excelprocessor/model/ExcelData.java
+// src/main/java/com/example/excelprocessor/model/PermissionData.java
 package com.example.excelprocessor.model;
 
 import lombok.AllArgsConstructor;
@@ -129,17 +136,55 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class ExcelData {
-    private String column1;
-    private String column2;
-    private String column3;
-    // 依照您的 Excel 資料結構調整欄位
+public class PermissionData {
+    private String action;           // 新增/刪除
+    private String systemCode;       // 應用系統代號
+    private String roleCode;         // 角色代碼
+    private String functionName;     // 功能名稱
+    private String permissionName;   // 權限名稱
+    private String functionCategory; // 功能分類
+    private int rowNumber;           // Excel 行號，用於錯誤追蹤
+    
+    // 檢查是否為 TING-INGENIUM 系統
+    public boolean isTingIngeniumSystem() {
+        return "TING-INGENIUM".equalsIgnoreCase(this.systemCode);
+    }
+    
+    // 檢查資料是否完整（功能名稱和功能分類不為空）
+    public boolean isDataComplete() {
+        return functionName != null && !functionName.trim().isEmpty() &&
+               functionCategory != null && !functionCategory.trim().isEmpty();
+    }
 }
 
-// src/main/java/com/example/excelprocessor/service/ExcelService.java
+// src/main/java/com/example/excelprocessor/model/SqlGenerationResult.java
+package com.example.excelprocessor.model;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.List;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class SqlGenerationResult {
+    private List<String> insertStatements;
+    private List<String> deleteStatements;
+    private int totalProcessed;
+    private int filteredCount;
+    private int validDataCount;
+    private List<String> errorMessages;
+    private String fileName;
+}
+
+// src/main/java/com/example/excelprocessor/service/PermissionExcelService.java
 package com.example.excelprocessor.service;
 
-import com.example.excelprocessor.model.ExcelData;
+import com.example.excelprocessor.model.PermissionData;
+import com.example.excelprocessor.model.SqlGenerationResult;
+import com.example.excelprocessor.util.SqlGenerator;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
@@ -151,41 +196,122 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
-public class ExcelService {
+public class PermissionExcelService {
 
-    public List<ExcelData> processExcelFile(MultipartFile file) throws IOException {
-        List<ExcelData> dataList = new ArrayList<>();
+    private static final String TARGET_SYSTEM = "TING-INGENIUM";
+    private static final int HEADER_ROW = 0; // 假設第一行是標題
+    
+    // Excel 欄位索引 (根據您的 Excel 結構調整)
+    private static final int COL_ACTION = 0;           // 新增/刪除
+    private static final int COL_SYSTEM_CODE = 2;      // 應用系統代號
+    private static final int COL_ROLE_CODE = 3;        // 角色代碼
+    private static final int COL_FUNCTION_NAME = 4;    // 功能名稱
+    private static final int COL_PERMISSION_NAME = 5;  // 權限名稱
+    private static final int COL_FUNCTION_CATEGORY = 6; // 功能分類
+
+    public SqlGenerationResult processExcelFile(MultipartFile file) throws IOException {
+        List<PermissionData> allData = new ArrayList<>();
+        List<String> errorMessages = new ArrayList<>();
         
         try (InputStream inputStream = file.getInputStream()) {
             Workbook workbook = getWorkbook(inputStream, file.getOriginalFilename());
-            Sheet sheet = workbook.getSheetAt(0); // 取得第一個工作表
+            Sheet sheet = workbook.getSheetAt(0);
             
             Iterator<Row> rowIterator = sheet.iterator();
+            int rowNumber = 0;
             
             // 跳過標題行
             if (rowIterator.hasNext()) {
                 rowIterator.next();
+                rowNumber++;
             }
             
             // 讀取每一行資料
             while (rowIterator.hasNext()) {
                 Row row = rowIterator.next();
-                ExcelData data = new ExcelData();
+                rowNumber++;
                 
-                data.setColumn1(getCellValueAsString(row.getCell(0)));
-                data.setColumn2(getCellValueAsString(row.getCell(1)));
-                data.setColumn3(getCellValueAsString(row.getCell(2)));
-                // 依照您的 Excel 資料結構調整
-                
-                dataList.add(data);
+                try {
+                    PermissionData data = parseRowToPermissionData(row, rowNumber);
+                    if (data != null) {
+                        allData.add(data);
+                    }
+                } catch (Exception e) {
+                    errorMessages.add(String.format("第 %d 行資料解析錯誤: %s", rowNumber, e.getMessage()));
+                }
             }
             
             workbook.close();
         }
         
-        return dataList;
+        // 篩選 TING-INGENIUM 系統的資料
+        List<PermissionData> filteredData = allData.stream()
+                .filter(PermissionData::isTingIngeniumSystem)
+                .collect(Collectors.toList());
+        
+        // 進一步篩選有效資料（功能名稱和功能分類不為空）
+        List<PermissionData> validData = filteredData.stream()
+                .filter(PermissionData::isDataComplete)
+                .collect(Collectors.toList());
+        
+        // 添加無效資料的錯誤訊息
+        filteredData.stream()
+                .filter(data -> !data.isDataComplete())
+                .forEach(data -> errorMessages.add(
+                    String.format("第 %d 行: 功能名稱或功能分類為空", data.getRowNumber())
+                ));
+        
+        // 生成 SQL 語句
+        SqlGenerator sqlGenerator = new SqlGenerator();
+        List<String> insertStatements = sqlGenerator.generateInsertStatements(validData);
+        List<String> deleteStatements = sqlGenerator.generateDeleteStatements(validData);
+        
+        return new SqlGenerationResult(
+                insertStatements,
+                deleteStatements,
+                allData.size(),
+                filteredData.size(),
+                validData.size(),
+                errorMessages,
+                file.getOriginalFilename()
+        );
+    }
+    
+    private PermissionData parseRowToPermissionData(Row row, int rowNumber) {
+        // 檢查行是否為空
+        if (isRowEmpty(row)) {
+            return null;
+        }
+        
+        PermissionData data = new PermissionData();
+        data.setRowNumber(rowNumber);
+        
+        data.setAction(getCellValueAsString(row.getCell(COL_ACTION)));
+        data.setSystemCode(getCellValueAsString(row.getCell(COL_SYSTEM_CODE)));
+        data.setRoleCode(getCellValueAsString(row.getCell(COL_ROLE_CODE)));
+        data.setFunctionName(getCellValueAsString(row.getCell(COL_FUNCTION_NAME)));
+        data.setPermissionName(getCellValueAsString(row.getCell(COL_PERMISSION_NAME)));
+        data.setFunctionCategory(getCellValueAsString(row.getCell(COL_FUNCTION_CATEGORY)));
+        
+        return data;
+    }
+    
+    private boolean isRowEmpty(Row row) {
+        if (row == null) return true;
+        
+        for (int i = row.getFirstCellNum(); i < row.getLastCellNum(); i++) {
+            Cell cell = row.getCell(i);
+            if (cell != null && cell.getCellType() != CellType.BLANK) {
+                String cellValue = getCellValueAsString(cell);
+                if (cellValue != null && !cellValue.trim().isEmpty()) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
     
     private String getCellValueAsString(Cell cell) {
@@ -195,17 +321,25 @@ public class ExcelService {
         
         switch (cell.getCellType()) {
             case STRING:
-                return cell.getStringCellValue();
+                return cell.getStringCellValue().trim();
             case NUMERIC:
                 if (DateUtil.isCellDateFormatted(cell)) {
                     return cell.getLocalDateTimeCellValue().toString();
                 } else {
-                    return String.valueOf(cell.getNumericCellValue());
+                    // 處理數字格式，避免科學記號
+                    double numericValue = cell.getNumericCellValue();
+                    if (numericValue == Math.floor(numericValue)) {
+                        return String.valueOf((long) numericValue);
+                    } else {
+                        return String.valueOf(numericValue);
+                    }
                 }
             case BOOLEAN:
                 return String.valueOf(cell.getBooleanCellValue());
             case FORMULA:
                 return cell.getCellFormula();
+            case BLANK:
+                return "";
             default:
                 return "";
         }
@@ -213,20 +347,75 @@ public class ExcelService {
     
     private Workbook getWorkbook(InputStream inputStream, String fileName) throws IOException {
         if (fileName.endsWith(".xlsx")) {
-            return new XSSFWorkbook(inputStream); // Excel 2007+
+            return new XSSFWorkbook(inputStream);
         } else if (fileName.endsWith(".xls")) {
-            return new HSSFWorkbook(inputStream); // Excel 97-2003
+            return new HSSFWorkbook(inputStream);
         } else {
-            throw new IllegalArgumentException("檔案不是 Excel 格式!");
+            throw new IllegalArgumentException("不支援的檔案格式，請上傳 .xls 或 .xlsx 檔案");
         }
     }
 }
 
-// src/main/java/com/example/excelprocessor/controller/FileUploadController.java
+// src/main/java/com/example/excelprocessor/util/SqlGenerator.java
+package com.example.excelprocessor.util;
+
+import com.example.excelprocessor.model.PermissionData;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Component
+public class SqlGenerator {
+    
+    public List<String> generateInsertStatements(List<PermissionData> permissionDataList) {
+        return permissionDataList.stream()
+                .filter(data -> "新增".equals(data.getAction()))
+                .map(this::createInsertStatement)
+                .collect(Collectors.toList());
+    }
+    
+    public List<String> generateDeleteStatements(List<PermissionData> permissionDataList) {
+        return permissionDataList.stream()
+                .filter(data -> "刪除".equals(data.getAction()))
+                .map(this::createDeleteStatement)
+                .collect(Collectors.toList());
+    }
+    
+    private String createInsertStatement(PermissionData data) {
+        // 轉義單引號以防止 SQL 注入
+        String functionName = escapeSqlString(data.getFunctionName());
+        String functionCategory = escapeSqlString(data.getFunctionCategory());
+        
+        return String.format("INSERT INTO TBPFS VALUES ('T1', '%s', '%s');", 
+                functionName, functionCategory);
+    }
+    
+    private String createDeleteStatement(PermissionData data) {
+        // 為刪除操作創建對應的 DELETE 語句
+        String functionName = escapeSqlString(data.getFunctionName());
+        String functionCategory = escapeSqlString(data.getFunctionCategory());
+        
+        return String.format("DELETE FROM TBPFS WHERE COL1 = 'T1' AND COL2 = '%s' AND COL3 = '%s';", 
+                functionName, functionCategory);
+    }
+    
+    /**
+     * 轉義 SQL 字串中的單引號
+     */
+    private String escapeSqlString(String input) {
+        if (input == null) {
+            return "";
+        }
+        return input.replace("'", "''");
+    }
+}
+
+// src/main/java/com/example/excelprocessor/controller/PermissionExcelController.java
 package com.example.excelprocessor.controller;
 
-import com.example.excelprocessor.model.ExcelData;
-import com.example.excelprocessor.service.ExcelService;
+import com.example.excelprocessor.model.SqlGenerationResult;
+import com.example.excelprocessor.service.PermissionExcelService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -237,16 +426,15 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.io.IOException;
-import java.util.List;
 
 @Controller
-public class FileUploadController {
+public class PermissionExcelController {
 
-    private final ExcelService excelService;
+    private final PermissionExcelService permissionExcelService;
 
     @Autowired
-    public FileUploadController(ExcelService excelService) {
-        this.excelService = excelService;
+    public PermissionExcelController(PermissionExcelService permissionExcelService) {
+        this.permissionExcelService = permissionExcelService;
     }
 
     @GetMapping("/")
@@ -261,28 +449,30 @@ public class FileUploadController {
         
         // 檢查檔案是否為空
         if (file.isEmpty()) {
-            redirectAttributes.addFlashAttribute("message", "請選擇要上傳的檔案");
+            redirectAttributes.addFlashAttribute("error", "請選擇要上傳的檔案");
             return "redirect:/";
         }
         
         // 檢查檔案格式
         String fileName = file.getOriginalFilename();
-        if (fileName != null && !(fileName.endsWith(".xls") || fileName.endsWith(".xlsx"))) {
-            redirectAttributes.addFlashAttribute("message", "請上傳 Excel 檔案 (.xls 或 .xlsx)");
+        if (fileName == null || !(fileName.toLowerCase().endsWith(".xls") || fileName.toLowerCase().endsWith(".xlsx"))) {
+            redirectAttributes.addFlashAttribute("error", "請上傳 Excel 檔案 (.xls 或 .xlsx)");
             return "redirect:/";
         }
         
         try {
-            // 處理 Excel 檔案
-            List<ExcelData> excelDataList = excelService.processExcelFile(file);
+            // 處理 Excel 檔案並生成 SQL
+            SqlGenerationResult result = permissionExcelService.processExcelFile(file);
             
-            // 將資料傳遞到結果頁面
-            model.addAttribute("excelDataList", excelDataList);
-            model.addAttribute("fileName", fileName);
+            // 將結果傳遞到頁面
+            model.addAttribute("result", result);
             
             return "result";
         } catch (IOException e) {
-            redirectAttributes.addFlashAttribute("message", "處理檔案時發生錯誤: " + e.getMessage());
+            redirectAttributes.addFlashAttribute("error", "處理檔案時發生錯誤: " + e.getMessage());
+            return "redirect:/";
+        } catch (Exception e) {
+            redirectAttributes.addFlashAttribute("error", "系統錯誤: " + e.getMessage());
             return "redirect:/";
         }
     }
@@ -293,25 +483,69 @@ public class FileUploadController {
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
-    <title>Excel 檔案上傳</title>
+    <title>權限管理 Excel 處理系統</title>
     <link rel="stylesheet" th:href="@{/css/main.css}">
 </head>
 <body>
     <div class="container">
-        <h1>Excel 檔案上傳處理系統</h1>
+        <header>
+            <h1>🔐 權限管理 Excel 處理系統</h1>
+            <p class="subtitle">專門處理 TING-INGENIUM 系統權限資料並生成 SQL 語句</p>
+        </header>
         
-        <div th:if="${message}" class="alert" th:text="${message}"></div>
+        <div th:if="${error}" class="alert alert-error">
+            <strong>錯誤:</strong> <span th:text="${error}"></span>
+        </div>
         
-        <div class="card">
-            <h2>請選擇 Excel 檔案上傳</h2>
-            <form method="POST" th:action="@{/upload}" enctype="multipart/form-data">
-                <div class="form-group">
-                    <input type="file" name="file" accept=".xls,.xlsx" required>
+        <div class="upload-card">
+            <div class="upload-info">
+                <h2>📋 Excel 檔案格式說明</h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <strong>支援格式:</strong> .xls, .xlsx
+                    </div>
+                    <div class="info-item">
+                        <strong>處理條件:</strong> 僅處理「應用系統代號」= TING-INGENIUM 的資料
+                    </div>
+                    <div class="info-item">
+                        <strong>必要欄位:</strong> 新增/刪除、應用系統代號、角色代碼、功能名稱、權限名稱、功能分類
+                    </div>
+                    <div class="info-item">
+                        <strong>輸出格式:</strong> INSERT INTO TBPFS ('T1', 功能名稱, 功能分類)
+                    </div>
                 </div>
-                <button type="submit" class="btn">上傳檔案</button>
-            </form>
+            </div>
+            
+            <div class="upload-section">
+                <h2>📤 上傳 Excel 檔案</h2>
+                <form method="POST" th:action="@{/upload}" enctype="multipart/form-data" class="upload-form">
+                    <div class="file-input-wrapper">
+                        <input type="file" name="file" id="file" accept=".xls,.xlsx" required class="file-input">
+                        <label for="file" class="file-label">
+                            <span class="file-icon">📁</span>
+                            <span class="file-text">選擇 Excel 檔案</span>
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <span>🚀 開始處理</span>
+                    </button>
+                </form>
+            </div>
         </div>
     </div>
+    
+    <script>
+        // 檔案選擇提示
+        document.getElementById('file').addEventListener('change', function(e) {
+            const fileName = e.target.files[0]?.name;
+            const fileText = document.querySelector('.file-text');
+            if (fileName) {
+                fileText.textContent = fileName;
+            } else {
+                fileText.textContent = '選擇 Excel 檔案';
+            }
+        });
+    </script>
 </body>
 </html>
 
@@ -320,135 +554,231 @@ public class FileUploadController {
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
-    <title>Excel 處理結果</title>
+    <title>處理結果 - 權限管理 Excel 處理系統</title>
     <link rel="stylesheet" th:href="@{/css/main.css}">
 </head>
 <body>
     <div class="container">
-        <h1>Excel 處理結果</h1>
+        <header>
+            <h1>📊 處理結果</h1>
+            <p class="subtitle" th:text="'檔案: ' + ${result.fileName}"></p>
+        </header>
         
-        <div class="card">
-            <h2 th:text="'檔案名稱: ' + ${fileName}"></h2>
-            
-            <div th:if="${excelDataList.empty}">
-                <p>沒有找到資料</p>
+        <!-- 統計資訊 -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" th:text="${result.totalProcessed}"></div>
+                <div class="stat-label">總處理筆數</div>
             </div>
-            
-            <div th:unless="${excelDataList.empty}">
-                <p th:text="'共處理 ' + ${excelDataList.size()} + ' 筆資料'"></p>
-                
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>欄位 1</th>
-                            <th>欄位 2</th>
-                            <th>欄位 3</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr th:each="data : ${excelDataList}">
-                            <td th:text="${data.column1}"></td>
-                            <td th:text="${data.column2}"></td>
-                            <td th:text="${data.column3}"></td>
-                        </tr>
-                    </tbody>
-                </table>
+            <div class="stat-card">
+                <div class="stat-number" th:text="${result.filteredCount}"></div>
+                <div class="stat-label">TING-INGENIUM 筆數</div>
             </div>
-            
-            <a href="/" class="btn">返回上傳頁面</a>
+            <div class="stat-card">
+                <div class="stat-number" th:text="${result.validDataCount}"></div>
+                <div class="stat-label">有效資料筆數</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" th:text="${result.insertStatements.size()}"></div>
+                <div class="stat-label">INSERT 語句</div>
+            </div>
+        </div>
+        
+        <!-- 錯誤訊息 -->
+        <div th:if="${!result.errorMessages.empty}" class="error-section">
+            <h3>⚠️ 處理警告</h3>
+            <div class="error-list">
+                <div th:each="error : ${result.errorMessages}" class="error-item" th:text="${error}"></div>
+            </div>
+        </div>
+        
+        <!-- INSERT 語句 -->
+        <div th:if="${!result.insertStatements.empty}" class="sql-section">
+            <div class="section-header">
+                <h3>✅ INSERT 語句 (新增操作)</h3>
+                <button class="btn btn-copy" onclick="copyToClipboard('insert-sql')">📋 複製全部</button>
+            </div>
+            <div class="sql-container">
+                <pre id="insert-sql" class="sql-content"><span th:each="sql, iterStat : ${result.insertStatements}"><span th:text="${sql}"></span><span th:if="${!iterStat.last}">
+</span></span></pre>
+            </div>
+        </div>
+        
+        <!-- DELETE 語句 -->
+        <div th:if="${!result.deleteStatements.empty}" class="sql-section">
+            <div class="section-header">
+                <h3>🗑️ DELETE 語句 (刪除操作)</h3>
+                <button class="btn btn-copy" onclick="copyToClipboard('delete-sql')">📋 複製全部</button>
+            </div>
+            <div class="sql-container">
+                <pre id="delete-sql" class="sql-content"><span th:each="sql, iterStat : ${result.deleteStatements}"><span th:text="${sql}"></span><span th:if="${!iterStat.last}">
+</span></span></pre>
+            </div>
+        </div>
+        
+        <!-- 沒有資料的情況 -->
+        <div th:if="${result.validDataCount == 0}" class="no-data-section">
+            <div class="no-data-card">
+                <h3>📭 沒有找到有效資料</h3>
+                <p>請確認 Excel 檔案中包含「應用系統代號」為 TING-INGENIUM 的完整資料。</p>
+            </div>
+        </div>
+        
+        <div class="action-buttons">
+            <a href="/" class="btn btn-secondary">🔄 重新上傳</a>
         </div>
     </div>
+    
+    <script>
+        function copyToClipboard(elementId) {
+            const element = document.getElementById(elementId);
+            const text = element.textContent;
+            
+            navigator.clipboard.writeText(text).then(function() {
+                // 顯示複製成功提示
+                const button = event.target.closest('.btn-copy');
+                const originalText = button.innerHTML;
+                button.innerHTML = '✅ 已複製';
+                button.classList.add('copied');
+                
+                setTimeout(function() {
+                    button.innerHTML = originalText;
+                    button.classList.remove('copied');
+                }, 2000);
+            }).catch(function(err) {
+                console.error('複製失敗: ', err);
+                alert('複製失敗，請手動選取並複製');
+            });
+        }
+    </script>
 </body>
 </html>
 
 // src/main/resources/static/css/main.css
-body {
-    font-family: 'Arial', sans-serif;
-    line-height: 1.6;
+* {
     margin: 0;
     padding: 0;
-    background-color: #f4f4f4;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
     color: #333;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
 }
 
 .container {
-    width: 80%;
-    margin: 30px auto;
-    overflow: auto;
-}
-
-h1 {
-    text-align: center;
-    margin-bottom: 20px;
-    color: #444;
-}
-
-.card {
-    background: #fff;
-    border-radius: 5px;
+    max-width: 1200px;
+    margin: 0 auto;
     padding: 20px;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 30px;
+    color: white;
+}
+
+header h1 {
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+.subtitle {
+    font-size: 1.1rem;
+    opacity: 0.9;
+}
+
+/* 上傳頁面樣式 */
+.upload-card {
+    background: white;
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    overflow: hidden;
+    margin-bottom: 30px;
+}
+
+.upload-info {
+    background: #f8f9fa;
+    padding: 30px;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.upload-info h2 {
+    color: #495057;
     margin-bottom: 20px;
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    font-size: 1.4rem;
 }
 
-.form-group {
-    margin-bottom: 15px;
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 15px;
 }
 
-.btn {
+.info-item {
+    background: white;
+    padding: 15px;
+    border-radius: 8px;
+    border-left: 4px solid #667eea;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.info-item strong {
+    color: #495057;
+    display: block;
+    margin-bottom: 5px;
+}
+
+.upload-section {
+    padding: 30px;
+}
+
+.upload-section h2 {
+    color: #495057;
+    margin-bottom: 25px;
+    font-size: 1.4rem;
+}
+
+.upload-form {
+    text-align: center;
+}
+
+.file-input-wrapper {
+    position: relative;
     display: inline-block;
-    background: #007bff;
-    color: #fff;
-    border: none;
-    padding: 10px 20px;
-    margin: 10px 0;
-    border-radius: 5px;
-    cursor: pointer;
-    text-decoration: none;
-    font-size: 16px;
-}
-
-.btn:hover {
-    background: #0069d9;
-}
-
-.alert {
-    background: #f8d7da;
-    padding: 10px;
     margin-bottom: 20px;
-    border-radius: 5px;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
 }
 
-.data-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 20px 0;
+.file-input {
+    position: absolute;
+    left: -9999px;
 }
 
-.data-table th, .data-table td {
-    padding: 12px;
-    text-align: left;
-    border-bottom: 1px solid #ddd;
+.file-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 15px 30px;
+    background: #f8f9fa;
+    border: 2px dashed #dee2e6;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 1.1rem;
 }
 
-.data-table th {
-    background-color: #f2f2f2;
-    font-weight: bold;
+.file-label:hover {
+    background: #e9ecef;
+    border-color: #667eea;
+    transform: translateY(-2px);
 }
 
-.data-table tr:hover {
-    background-color: #f9f9f9;
+.file-icon {
+    font-size: 1.5rem;
 }
 
-// src/main/resources/application.properties
-# 伺服器埠號
-server.port=8080
-
-# 上傳檔案大小限制
-spring.servlet.multipart.max-file-size=10MB
-spring.servlet.multipart.max-request-size=10MB
-
-# Thymeleaf 設定
-spring.thymeleaf.cache=false
+/*
