@@ -77,8 +77,10 @@ excel-processor/
         </dependency>
         
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
+            <groupId>javax.servlet</groupId>
+            <artifactId>javax.servlet-api</artifactId>
+            <version>4.0.1</version>
+            <scope>provided</scope>
         </dependency>
         
         <dependency>
@@ -417,6 +419,10 @@ package com.example.excelprocessor.controller;
 import com.example.excelprocessor.model.SqlGenerationResult;
 import com.example.excelprocessor.service.PermissionExcelService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -425,7 +431,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import jakarta.servlet.http.HttpSession;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
 @Controller
 public class PermissionExcelController {
@@ -445,7 +455,8 @@ public class PermissionExcelController {
     @PostMapping("/upload")
     public String uploadFile(@RequestParam("file") MultipartFile file, 
                              RedirectAttributes redirectAttributes,
-                             Model model) {
+                             Model model,
+                             HttpSession session) {
         
         // 檢查檔案是否為空
         if (file.isEmpty()) {
@@ -464,6 +475,9 @@ public class PermissionExcelController {
             // 處理 Excel 檔案並生成 SQL
             SqlGenerationResult result = permissionExcelService.processExcelFile(file);
             
+            // 將結果存到 session 中，用於下載
+            session.setAttribute("sqlResult", result);
+            
             // 將結果傳遞到頁面
             model.addAttribute("result", result);
             
@@ -475,6 +489,78 @@ public class PermissionExcelController {
             redirectAttributes.addFlashAttribute("error", "系統錯誤: " + e.getMessage());
             return "redirect:/";
         }
+    }
+    
+    @GetMapping("/download/sql")
+    public ResponseEntity<ByteArrayResource> downloadSqlFile(HttpSession session) {
+        SqlGenerationResult result = (SqlGenerationResult) session.getAttribute("sqlResult");
+        
+        if (result == null) {
+            return ResponseEntity.notFound().build();
+        }
+        
+        // 生成 SQL 檔案內容
+        StringBuilder sqlContent = new StringBuilder();
+        
+        // 添加檔案頭部註釋
+        sqlContent.append("-- ========================================\n");
+        sqlContent.append("-- 權限管理系統 SQL 語句\n");
+        sqlContent.append("-- 來源檔案: ").append(result.getFileName()).append("\n");
+        sqlContent.append("-- 生成時間: ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())).append("\n");
+        sqlContent.append("-- 總處理筆數: ").append(result.getTotalProcessed()).append("\n");
+        sqlContent.append("-- TING-INGENIUM 筆數: ").append(result.getFilteredCount()).append("\n");
+        sqlContent.append("-- 有效資料筆數: ").append(result.getValidDataCount()).append("\n");
+        sqlContent.append("-- ========================================\n\n");
+        
+        // 添加 INSERT 語句
+        if (!result.getInsertStatements().isEmpty()) {
+            sqlContent.append("-- INSERT 語句 (新增操作)\n");
+            sqlContent.append("-- 共 ").append(result.getInsertStatements().size()).append(" 筆\n");
+            sqlContent.append("-- ========================================\n\n");
+            
+            for (String insertSql : result.getInsertStatements()) {
+                sqlContent.append(insertSql).append("\n");
+            }
+            sqlContent.append("\n");
+        }
+        
+        // 添加 DELETE 語句
+        if (!result.getDeleteStatements().isEmpty()) {
+            sqlContent.append("-- DELETE 語句 (刪除操作)\n");
+            sqlContent.append("-- 共 ").append(result.getDeleteStatements().size()).append(" 筆\n");
+            sqlContent.append("-- ========================================\n\n");
+            
+            for (String deleteSql : result.getDeleteStatements()) {
+                sqlContent.append(deleteSql).append("\n");
+            }
+            sqlContent.append("\n");
+        }
+        
+        // 添加錯誤訊息
+        if (!result.getErrorMessages().isEmpty()) {
+            sqlContent.append("-- 處理警告訊息\n");
+            sqlContent.append("-- ========================================\n");
+            for (String errorMsg : result.getErrorMessages()) {
+                sqlContent.append("-- ").append(errorMsg).append("\n");
+            }
+            sqlContent.append("\n");
+        }
+        
+        sqlContent.append("-- 檔案結束\n");
+        
+        // 建立檔案名稱
+        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        String downloadFileName = String.format("TING_INGENIUM_SQL_%s.sql", timestamp);
+        
+        // 轉換為 ByteArrayResource
+        byte[] sqlBytes = sqlContent.toString().getBytes(StandardCharsets.UTF_8);
+        ByteArrayResource resource = new ByteArrayResource(sqlBytes);
+        
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + downloadFileName + "\"")
+                .contentType(MediaType.parseMediaType("application/sql"))
+                .contentLength(sqlBytes.length)
+                .body(resource);
     }
 }
 
@@ -592,27 +678,33 @@ public class PermissionExcelController {
             </div>
         </div>
         
-        <!-- INSERT 語句 -->
-        <div th:if="${!result.insertStatements.empty}" class="sql-section">
+        <!-- SQL 預覽和下載 -->
+        <div th:if="${result.validDataCount > 0}" class="sql-section">
             <div class="section-header">
-                <h3>✅ INSERT 語句 (新增操作)</h3>
-                <button class="btn btn-copy" onclick="copyToClipboard('insert-sql')">📋 複製全部</button>
+                <h3>📄 SQL 語句預覽</h3>
+                <a th:href="@{/download/sql}" class="btn btn-download">📥 下載 SQL 檔案</a>
             </div>
-            <div class="sql-container">
-                <pre id="insert-sql" class="sql-content"><span th:each="sql, iterStat : ${result.insertStatements}"><span th:text="${sql}"></span><span th:if="${!iterStat.last}">
-</span></span></pre>
-            </div>
-        </div>
-        
-        <!-- DELETE 語句 -->
-        <div th:if="${!result.deleteStatements.empty}" class="sql-section">
-            <div class="section-header">
-                <h3>🗑️ DELETE 語句 (刪除操作)</h3>
-                <button class="btn btn-copy" onclick="copyToClipboard('delete-sql')">📋 複製全部</button>
-            </div>
-            <div class="sql-container">
-                <pre id="delete-sql" class="sql-content"><span th:each="sql, iterStat : ${result.deleteStatements}"><span th:text="${sql}"></span><span th:if="${!iterStat.last}">
-</span></span></pre>
+            
+            <div class="sql-preview">
+                <!-- INSERT 語句預覽 -->
+                <div th:if="${!result.insertStatements.empty}" class="sql-preview-section">
+                    <h4>✅ INSERT 語句 (<span th:text="${result.insertStatements.size()}"></span> 筆)</h4>
+                    <div class="sql-container">
+                        <pre class="sql-content"><span th:each="sql, iterStat : ${result.insertStatements}"><span th:if="${iterStat.index < 5}" th:text="${sql}"></span><span th:if="${iterStat.index < 4 and !iterStat.last}">
+</span></span><span th:if="${result.insertStatements.size() > 5}">
+-- ... 省略其餘 <span th:text="${result.insertStatements.size() - 5}"></span> 筆，請下載完整 SQL 檔案</span></pre>
+                    </div>
+                </div>
+                
+                <!-- DELETE 語句預覽 -->
+                <div th:if="${!result.deleteStatements.empty}" class="sql-preview-section">
+                    <h4>🗑️ DELETE 語句 (<span th:text="${result.deleteStatements.size()}"></span> 筆)</h4>
+                    <div class="sql-container">
+                        <pre class="sql-content"><span th:each="sql, iterStat : ${result.deleteStatements}"><span th:if="${iterStat.index < 5}" th:text="${sql}"></span><span th:if="${iterStat.index < 4 and !iterStat.last}">
+</span></span><span th:if="${result.deleteStatements.size() > 5}">
+-- ... 省略其餘 <span th:text="${result.deleteStatements.size() - 5}"></span> 筆，請下載完整 SQL 檔案</span></pre>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -630,26 +722,16 @@ public class PermissionExcelController {
     </div>
     
     <script>
-        function copyToClipboard(elementId) {
-            const element = document.getElementById(elementId);
-            const text = element.textContent;
-            
-            navigator.clipboard.writeText(text).then(function() {
-                // 顯示複製成功提示
-                const button = event.target.closest('.btn-copy');
-                const originalText = button.innerHTML;
-                button.innerHTML = '✅ 已複製';
-                button.classList.add('copied');
-                
-                setTimeout(function() {
-                    button.innerHTML = originalText;
-                    button.classList.remove('copied');
-                }, 2000);
-            }).catch(function(err) {
-                console.error('複製失敗: ', err);
-                alert('複製失敗，請手動選取並複製');
-            });
-        }
+        // 檔案選擇提示
+        document.getElementById('file').addEventListener('change', function(e) {
+            const fileName = e.target.files[0]?.name;
+            const fileText = document.querySelector('.file-text');
+            if (fileName) {
+                fileText.textContent = fileName;
+            } else {
+                fileText.textContent = '選擇 Excel 檔案';
+            }
+        });
     </script>
 </body>
 </html>
