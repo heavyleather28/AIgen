@@ -1,0 +1,67 @@
+spring:
+  datasource:
+    primary:
+      # SQL Server 配置
+      jdbc-url: jdbc:sqlserver://localhost:1433;databaseName=your_sqlserver_db;encrypt=true;trustServerCertificate=true
+      username: your_username
+      password: your_password
+      driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+      hikari:
+        connection-timeout: 20000
+        maximum-pool-size: 10
+        minimum-idle: 5
+        idle-timeout: 300000
+        max-lifetime: 1200000
+        
+    secondary:
+      # DB2 配置
+      jdbc-url: jdbc:db2://localhost:50000/your_db2_db
+      username: your_db2_username
+      password: your_db2_password
+      driver-class-name: com.ibm.db2.jcc.DB2Driver
+      hikari:
+        connection-timeout: 20000
+        maximum-pool-size: 8
+        minimum-idle: 3
+        idle-timeout: 300000
+        max-lifetime: 1200000
+
+# JPA/Hibernate 配置
+  jpa:
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.SQLServerDialect
+        show_sql: false
+        format_sql: true
+        use_sql_comments: true
+        jdbc:
+          batch_size: 25
+        order_inserts: true
+        order_updates: true
+    hibernate:
+      ddl-auto: validate
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+        implicit-strategy: org.hibernate.boot.model.naming.ImplicitNamingStrategyLegacyJpaImpl
+
+# MyBatis 配置
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+    use-generated-keys: true
+    default-fetch-size: 100
+    default-statement-timeout: 30
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  type-aliases-package: com.example.model
+  mapper-locations: 
+    - classpath:mapper/sqlserver/*.xml
+    - classpath:mapper/db2/*.xml
+
+logging:
+  level:
+    com.zaxxer.hikari: DEBUG
+    com.example.mapper: DEBUG
+    org.apache.ibatis: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE

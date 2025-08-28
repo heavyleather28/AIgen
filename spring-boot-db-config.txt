@@ -1,0 +1,46 @@
+spring:
+  datasource:
+    primary:
+      # SQL Server 配置
+      jdbc-url: jdbc:sqlserver://localhost:1433;databaseName=your_sqlserver_db;encrypt=true;trustServerCertificate=true
+      username: your_username
+      password: your_password
+      driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+      hikari:
+        connection-timeout: 20000
+        maximum-pool-size: 10
+        minimum-idle: 5
+        idle-timeout: 300000
+        max-lifetime: 1200000
+        
+    secondary:
+      # DB2 配置
+      jdbc-url: jdbc:db2://localhost:50000/your_db2_db
+      username: your_db2_username
+      password: your_db2_password
+      driver-class-name: com.ibm.db2.jcc.DB2Driver
+      hikari:
+        connection-timeout: 20000
+        maximum-pool-size: 8
+        minimum-idle: 3
+        idle-timeout: 300000
+        max-lifetime: 1200000
+
+# MyBatis 配置
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+    use-generated-keys: true
+    default-fetch-size: 100
+    default-statement-timeout: 30
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  type-aliases-package: com.example.model
+  mapper-locations: 
+    - classpath:mapper/sqlserver/*.xml
+    - classpath:mapper/db2/*.xml
+
+logging:
+  level:
+    com.zaxxer.hikari: DEBUG
+    com.example.mapper: DEBUG
+    org.apache.ibatis: DEBUG
